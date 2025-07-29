@@ -1,5 +1,6 @@
 /**
- * Shuffle a deck using Fisher-Yates algorithm, using secure random numbers
+ * Shuffle a deck using Fisher-Yates algorithm, using secure random numbers.
+ * (Assumes presence of /dev/urandom.)
  * The random bits are assumed to be a limited resource,
  * so care is taken to use them sparingly.
  *
@@ -34,6 +35,7 @@
 #include <unistd.h>
 
 #define BUFSZ 256
+#define MAX_RAND_BITS (28)
 
 // Get the next secure random bit, doing block reads of bits
 static uint32_t secure_random_bit(void)
@@ -42,8 +44,6 @@ static uint32_t secure_random_bit(void)
   static uint32_t max_winx = 0;
   static uint32_t winx = 0;
   static uint32_t bcnt = 0;
-
-  uint32_t bit;
 
   if (winx == max_winx)
   {
@@ -59,7 +59,8 @@ static uint32_t secure_random_bit(void)
     rv = read(fd, rand_buf, sizeof(rand_buf));
     close(fd);
 
-    if (rv < 0)
+    // check we got at least one word
+    if (rv < (ssize_t)sizeof(rand_buf[0]))
     {
       perror("read");
       exit(1);
@@ -71,7 +72,7 @@ static uint32_t secure_random_bit(void)
   }
 
   // take the lowest bit
-  bit = rand_buf[winx] & 1;
+  uint32_t bit = rand_buf[winx] & 1;
 
   // shift and maybe incr winx
   rand_buf[winx] >>= 1;
@@ -88,8 +89,13 @@ static uint32_t secure_random_bit(void)
 // Returns in the closed interval [0, max-1], using the fewest number of random bits
 static uint32_t secure_random(uint32_t max)
 {
+  if (max == 0)
+  {
+    fprintf(stderr, "secure_random() called with max == 0\n");
+    exit(1);
+  }
+
   uint32_t r = 0, rmax = 1;
-  uint32_t defect;
 
   // get enough bits to be >= max
   while (rmax < max)
@@ -100,7 +106,7 @@ static uint32_t secure_random(uint32_t max)
     rmax <<= 1;
   }
 
-  defect = rmax % max;
+  uint32_t defect = rmax % max;
 
   // keep adding bits until valid
   while (rmax - defect <= r)
@@ -109,8 +115,8 @@ static uint32_t secure_random(uint32_t max)
     if (secure_random_bit() == 1)
       r |= rmax;
 
-    // go for a max size of 28 bits
-    if (rmax < (1<<28))
+    // go for a max size of bits
+    if (rmax < (1<<MAX_RAND_BITS))
     {
       rmax <<= 1;
       defect = rmax % max;
@@ -139,7 +145,7 @@ void init_deck(Card *deck)
   const char suits[] = {'S', 'H', 'D', 'C'};
   const char ranks[] = {'A', '2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K'};
 
-  for (int i = 0; i < DECK_SIZE; i++)
+  for (uint32_t i = 0; i < DECK_SIZE; i++)
   {
     deck[i].suit = suits[i / 13];
     deck[i].rank = ranks[i % 13];
